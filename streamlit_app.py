@@ -117,95 +117,246 @@ def safe_sum(df: pd.DataFrame, col: str, mask=None, default: float = 0.0) -> flo
     return float(df.loc[mask, col].sum())
 
 
-def chart_style(ax, title, xlabel="", ylabel=""):
-    ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
-    ax.set_xlabel(xlabel, fontsize=10)
-    ax.set_ylabel(ylabel, fontsize=10)
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import numpy as np
+import pandas as pd
+
+
+# ---------- CONSISTENT CHART THEME ----------
+COLORS = {
+    "primary": "#E50914",       # main brand red
+    "secondary": "#B20710",     # darker red
+    "accent": "#FF6B6B",        # soft red
+    "light": "#FFD6D6",         # very light red
+    "text": "#F9FAFB",          # near white
+    "muted": "#9CA3AF",         # gray
+    "grid": "#374151",          # dark gray
+    "bg": "#0B1220",            # chart background
+    "card": "#111827",          # panel background
+}
+
+RED_CMAP = mcolors.LinearSegmentedColormap.from_list(
+    "custom_reds",
+    [COLORS["light"], COLORS["accent"], COLORS["primary"], COLORS["secondary"]]
+)
+
+
+def apply_chart_theme(fig, ax):
+    fig.patch.set_facecolor(COLORS["card"])
+    ax.set_facecolor(COLORS["card"])
+
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", linestyle="--", alpha=0.25)
+    ax.spines["left"].set_color(COLORS["muted"])
+    ax.spines["bottom"].set_color(COLORS["muted"])
+
+    ax.tick_params(colors=COLORS["text"], labelsize=9)
+    ax.xaxis.label.set_color(COLORS["text"])
+    ax.yaxis.label.set_color(COLORS["text"])
+    ax.title.set_color(COLORS["text"])
+
+    ax.grid(axis="y", linestyle="--", linewidth=0.7, alpha=0.22, color=COLORS["grid"])
+
+
+def chart_style(ax, title, xlabel="", ylabel=""):
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=12, color=COLORS["text"])
+    ax.set_xlabel(xlabel, fontsize=10, color=COLORS["text"])
+    ax.set_ylabel(ylabel, fontsize=10, color=COLORS["text"])
+
+
+def add_value_labels_barh(ax, values, pad_ratio=0.012, money=False, pct=False):
+    if len(values) == 0:
+        return
+    max_val = max(values) if max(values) != 0 else 1
+    for i, v in enumerate(values):
+        if money:
+            label = f"${v:,.0f}"
+        elif pct:
+            label = f"{v:.0%}"
+        else:
+            label = f"{int(v):,}"
+        ax.text(
+            v + max_val * pad_ratio,
+            i,
+            label,
+            va="center",
+            fontsize=9,
+            color=COLORS["text"]
+        )
+
+
+def add_value_labels_bar(ax, values, pad_ratio=0.02, pct=False, money=False):
+    if len(values) == 0:
+        return
+    max_val = max(values) if max(values) != 0 else 1
+    for i, v in enumerate(values):
+        if money:
+            label = f"${v:,.0f}"
+        elif pct:
+            label = f"{v:.0%}"
+        else:
+            label = f"{int(v):,}"
+        ax.text(
+            i,
+            v + max_val * pad_ratio,
+            label,
+            ha="center",
+            fontsize=9,
+            color=COLORS["text"]
+        )
 
 
 def build_overview_charts(df: pd.DataFrame):
     charts = []
 
-    # 1) Risk vs Value map
+    # 1) Risk vs Value Map
     if {"churn_probability", "value_score"}.issubset(df.columns):
         fig, ax = plt.subplots(figsize=(8, 5.2))
+
+        if "Total Charges" in df.columns:
+            sizes = df["Total Charges"].fillna(df["Total Charges"].median()).clip(lower=50) / 18
+            sizes = np.clip(sizes, 30, 260)
+        else:
+            sizes = 80
+
         scatter = ax.scatter(
             df["churn_probability"],
             df["value_score"],
-            c=df["value_score"],
-            s=np.clip(df.get("Total Charges", pd.Series([120] * len(df))).fillna(120) / 20, 25, 250),
-            cmap="Reds",
-            alpha=0.55,
-            edgecolors="none",
+            c=df["churn_probability"],
+            s=sizes,
+            cmap=RED_CMAP,
+            alpha=0.72,
+            edgecolors="none"
         )
-        ax.axvline(HIGH_RISK, linestyle="--", linewidth=1.5)
-        ax.axhline(HIGH_VALUE, linestyle="--", linewidth=1.5)
-        ax.text(HIGH_RISK + 0.01, df["value_score"].max() * 0.93, "High Risk", fontsize=9)
-        ax.text(0.03, HIGH_VALUE + 0.015, "High Value", fontsize=9)
+
+        ax.axvline(HIGH_RISK, color=COLORS["accent"], linestyle="--", linewidth=2)
+        ax.axhline(HIGH_VALUE, color=COLORS["accent"], linestyle="--", linewidth=2)
+
+        ax.text(
+            HIGH_RISK + 0.015,
+            df["value_score"].max() * 0.94 if len(df) else 0.9,
+            "High Risk Zone",
+            color=COLORS["text"],
+            fontsize=9
+        )
+        ax.text(
+            0.03,
+            HIGH_VALUE + 0.02,
+            "High Value Zone",
+            color=COLORS["text"],
+            fontsize=9
+        )
+
         chart_style(
             ax,
-            "Risk vs Value Customer Map",
+            "Customer Risk vs Value Map",
             "Churn Probability",
-            "Value Score",
+            "Value Score"
         )
+        apply_chart_theme(fig, ax)
+
+        cbar = fig.colorbar(scatter, ax=ax, pad=0.02)
+        cbar.set_label("Churn Probability", color=COLORS["text"])
+        cbar.ax.yaxis.set_tick_params(color=COLORS["text"])
+        plt.setp(cbar.ax.get_yticklabels(), color=COLORS["text"])
+
         charts.append(fig)
 
-    # 2) Segment distribution
+    # 2) Segment Distribution
     if "segment" in df.columns:
         seg = df["segment"].value_counts().sort_values()
         fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.barh(seg.index, seg.values)
-        for i, v in enumerate(seg.values):
-            ax.text(v + max(seg.values) * 0.01, i, f"{v:,}", va="center", fontsize=9)
+
+        bar_colors = [RED_CMAP(x) for x in np.linspace(0.35, 0.95, len(seg))]
+        ax.barh(seg.index, seg.values, color=bar_colors)
+
         chart_style(ax, "Customer Segment Distribution", "Customers", "")
+        apply_chart_theme(fig, ax)
+        add_value_labels_barh(ax, seg.values)
+
         charts.append(fig)
 
-    # 3) Revenue at risk by segment
+    # 3) Revenue at Risk by Segment
     if {"segment", "Total Charges", "churn_probability"}.issubset(df.columns):
-        risk_df = df.copy()
-        risk_df["revenue_at_risk"] = risk_df["Total Charges"] * risk_df["churn_probability"]
-        rev = risk_df.groupby("segment")["revenue_at_risk"].sum().sort_values()
+        temp = df.copy()
+        temp = temp[temp["churn_probability"] >= HIGH_RISK].copy()
+
+        if not temp.empty:
+            rev = temp.groupby("segment")["Total Charges"].sum().sort_values()
+            fig, ax = plt.subplots(figsize=(8, 4.8))
+
+            bar_colors = [RED_CMAP(x) for x in np.linspace(0.4, 1.0, len(rev))]
+            ax.barh(rev.index, rev.values, color=bar_colors)
+
+            chart_style(ax, "Revenue at Risk by Segment", "Revenue at Risk", "")
+            apply_chart_theme(fig, ax)
+            add_value_labels_barh(ax, rev.values, money=True)
+
+            charts.append(fig)
+
+    # 4) Average Churn Risk by Contract Type
+    if {"Contract", "churn_probability"}.issubset(df.columns):
+        contract_risk = df.groupby("Contract")["churn_probability"].mean().sort_values()
         fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.barh(rev.index, rev.values)
-        for i, v in enumerate(rev.values):
-            ax.text(v + max(rev.values) * 0.01, i, f"${v:,.0f}", va="center", fontsize=9)
-        chart_style(ax, "Revenue at Risk by Segment", "Estimated Revenue at Risk", "")
+
+        bar_colors = [RED_CMAP(x) for x in np.linspace(0.45, 0.95, len(contract_risk))]
+        ax.bar(contract_risk.index, contract_risk.values, color=bar_colors)
+
+        chart_style(ax, "Average Churn Risk by Contract Type", "", "Avg Churn Probability")
+        apply_chart_theme(fig, ax)
+        add_value_labels_bar(ax, contract_risk.values, pct=True)
+
+        plt.setp(ax.get_xticklabels(), rotation=15, ha="right", color=COLORS["text"])
         charts.append(fig)
 
-    # 4) Contract churn risk
-    if {"Contract", "churn_probability"}.issubset(df.columns):
-        contract_risk = (
-            df.groupby("Contract")["churn_probability"]
-            .mean()
+    # 5) Recommended Action Mix
+    if "recommended_action" in df.columns:
+        action_counts = (
+            df["recommended_action"]
+            .astype(str)
+            .str.strip()
+            .value_counts()
             .sort_values()
         )
-        fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.bar(contract_risk.index, contract_risk.values)
-        for i, v in enumerate(contract_risk.values):
-            ax.text(i, v + 0.01, f"{v:.0%}", ha="center", fontsize=9)
-        chart_style(ax, "Average Churn Risk by Contract Type", "", "Avg Churn Probability")
-        plt.setp(ax.get_xticklabels(), rotation=15, ha="right")
-        charts.append(fig)
 
-    # 5) Action recommendation mix
-    if "recommended_action" in df.columns:
-        action_counts = clean_action_series(df["recommended_action"]).value_counts().sort_values()
         fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.barh(action_counts.index, action_counts.values)
-        for i, v in enumerate(action_counts.values):
-            ax.text(v + max(action_counts.values) * 0.01, i, f"{v:,}", va="center", fontsize=9)
+        bar_colors = [RED_CMAP(x) for x in np.linspace(0.35, 0.95, len(action_counts))]
+        ax.barh(action_counts.index, action_counts.values, color=bar_colors)
+
         chart_style(ax, "Recommended Action Mix", "Customers", "")
+        apply_chart_theme(fig, ax)
+        add_value_labels_barh(ax, action_counts.values)
+
         charts.append(fig)
 
-    # 6) Churn probability distribution
+    # 6) Churn Probability Distribution
     if "churn_probability" in df.columns:
         fig, ax = plt.subplots(figsize=(8, 4.8))
-        ax.hist(df["churn_probability"], bins=30, alpha=0.9)
-        ax.axvline(HIGH_RISK, linestyle="--", linewidth=1.6)
+
+        n, bins, patches = ax.hist(
+            df["churn_probability"],
+            bins=30,
+            edgecolor="none"
+        )
+
+        for patch, left_edge in zip(patches, bins[:-1]):
+            normalized = min(max(left_edge, 0), 1)
+            patch.set_facecolor(RED_CMAP(normalized))
+            patch.set_alpha(0.95)
+
+        ax.axvline(HIGH_RISK, color=COLORS["accent"], linestyle="--", linewidth=2)
+        ax.text(
+            HIGH_RISK + 0.01,
+            max(n) * 0.92 if len(n) else 0,
+            "High-Risk Threshold",
+            color=COLORS["text"],
+            fontsize=9
+        )
+
         chart_style(ax, "Churn Risk Distribution", "Churn Probability", "Customer Count")
+        apply_chart_theme(fig, ax)
+
         charts.append(fig)
 
     return charts
