@@ -539,27 +539,6 @@ with tabs[2]:
     st.markdown("#### Top Customers to Save")
     st.dataframe(tables.get("top_save", pd.DataFrame()), use_container_width=True, hide_index=True)
 
-# ---------- MODEL INSIGHTS ----------
-with tabs[3]:
-    st.markdown("### Strategic Insights")
-
-i1, i2, i3 = st.columns(3)
-
-with i1:
-    st.info(
-        f"**Revenue Exposure**\n\nEstimated revenue at risk is **{fmt_money(risky_rev)}**, which highlights the value that could be protected through targeted retention campaigns."
-    )
-
-with i2:
-    st.info(
-        f"**Priority Segment**\n\n**{top_segment}** shows the highest average churn risk and should be the first focus for retention strategy."
-    )
-
-with i3:
-    st.info(
-        f"**Critical Customers**\n\nThere are **{high_value_high_risk:,}** customers in the high-value, high-risk zone — the most urgent group to retain."
-    )
-
 # ---------- EXPORT ----------
 with tabs[4]:
     st.markdown('<div class="section-label">Export Results</div>', unsafe_allow_html=True)
