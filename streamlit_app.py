@@ -441,7 +441,7 @@ with tabs[0]:
                     plt.close(charts[i + 1])
 
     if {"segment", "Total Charges", "churn_probability"}.issubset(filtered_df.columns):
-        risky_rev = (filtered_df["Total Charges"] * filtered_df["churn_probability"]).sum()
+        risky_rev = (filtered_df.loc[filtered_df["churn_probability"] >= HIGH_RISK, "Total Charges"].sum())
         top_segment = (
             filtered_df.groupby("segment")["churn_probability"].mean().sort_values(ascending=False).index[0]
         )
