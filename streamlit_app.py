@@ -541,23 +541,24 @@ with tabs[2]:
 
 # ---------- MODEL INSIGHTS ----------
 with tabs[3]:
-    st.markdown('<div class="section-label">Model & Feature Insights</div>', unsafe_allow_html=True)
+    st.markdown("### Strategic Insights")
 
-    stats_df, prob_fig = get_model_insights(filtered_df)
+i1, i2, i3 = st.columns(3)
 
-    m1, m2 = st.columns([1, 1])
+with i1:
+    st.info(
+        f"**Revenue Exposure**\n\nEstimated revenue at risk is **{fmt_money(risky_rev)}**, which highlights the value that could be protected through targeted retention campaigns."
+    )
 
-    with m1:
-        st.markdown("#### Feature Summary")
-        st.dataframe(stats_df, use_container_width=True)
+with i2:
+    st.info(
+        f"**Priority Segment**\n\n**{top_segment}** shows the highest average churn risk and should be the first focus for retention strategy."
+    )
 
-    with m2:
-        st.markdown("#### Risk Calibration View")
-        if prob_fig is not None:
-            st.pyplot(prob_fig, use_container_width=True)
-            plt.close(prob_fig)
-        else:
-            st.info("This chart needs both 'Churn' and 'churn_probability' columns.")
+with i3:
+    st.info(
+        f"**Critical Customers**\n\nThere are **{high_value_high_risk:,}** customers in the high-value, high-risk zone — the most urgent group to retain."
+    )
 
 # ---------- EXPORT ----------
 with tabs[4]:
