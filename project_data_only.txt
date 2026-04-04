@@ -1,0 +1,1 @@
+This app is locked to the Telco Customer Churn project dataset and pipeline.Use WA_Fn-UseC_-Telco-Customer-Churn.csv or business_ready_data.csv from this project.
