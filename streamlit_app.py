@@ -1,17 +1,21 @@
-
 from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Customer Intelligence & Retention System",
+    page_title="AI Customer Intelligence & Retention System",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
+# ---------- CONFIG ----------
 HIGH_RISK = 0.60
 HIGH_VALUE = 0.70
+TOP_N = 10
 
 DEFAULT_DATA_FILES = [
     "business_ready_data.csv",
@@ -20,27 +24,65 @@ DEFAULT_DATA_FILES = [
     "segmented_data.csv",
 ]
 
+# ---------- STYLING ----------
+st.markdown(
+    """
+    <style>
+    .main {
+        background: linear-gradient(180deg, #fff8f8 0%, #ffffff 100%);
+    }
+    .hero-card {
+        padding: 1.2rem 1.4rem;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #7f1d1d 0%, #b91c1c 45%, #ef4444 100%);
+        color: white;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.12);
+        margin-bottom: 1rem;
+    }
+    .hero-title {
+        font-size: 2rem;
+        font-weight: 800;
+        margin-bottom: 0.2rem;
+    }
+    .hero-sub {
+        font-size: 1rem;
+        opacity: 0.95;
+    }
+    .insight-box {
+        padding: 1rem 1.1rem;
+        border-radius: 16px;
+        background: #fff5f5;
+        border-left: 6px solid #dc2626;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+        margin-bottom: 0.8rem;
+    }
+    .section-label {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-top: 0.4rem;
+        margin-bottom: 0.7rem;
+        color: #7f1d1d;
+    }
+    div[data-testid="metric-container"] {
+        background: white;
+        border: 1px solid #f3d2d2;
+        padding: 14px;
+        border-radius: 16px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
+
+# ---------- DATA ----------
 @st.cache_data
-def load_project_data(uploaded_file=None):
-    """
-    Priority:
-    1) Uploaded CSV/XLSX from the sidebar
-    2) Project files committed in the repo
-    """
-    if uploaded_file is not None:
-        name = uploaded_file.name.lower()
-        if name.endswith(".csv"):
-            return pd.read_csv(uploaded_file), f"Uploaded file: {uploaded_file.name}"
-        if name.endswith(".xlsx") or name.endswith(".xls"):
-            return pd.read_excel(uploaded_file), f"Uploaded file: {uploaded_file.name}"
-        raise ValueError("Please upload a CSV or Excel file.")
-
+def load_project_data():
     for file_name in DEFAULT_DATA_FILES:
         path = Path(file_name)
         if path.exists():
-            return pd.read_csv(path), f"Loaded from repo: {file_name}"
-
+            return pd.read_csv(path), f"Connected to {file_name}"
     raise FileNotFoundError(
         "No project data file found. Add one of these files to your repo root: "
         + ", ".join(DEFAULT_DATA_FILES)
@@ -53,61 +95,153 @@ def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
         if "customerID" in df.columns:
             df["customer_id_display"] = df["customerID"].astype(str)
         else:
-            df["customer_id_display"] = df.index.astype(str)
+            df["customer_id_display"] = (
+                "CUST-" + (df.index + 1).astype(str).str.zfill(5)
+            )
     return df
 
 
-def metric_value(df, column, default=0):
-    return float(df[column].mean()) if column in df.columns else default
+def clean_action_series(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.strip()
 
 
-def metric_sum(df, column, mask=None, default=0):
-    if column not in df.columns:
+def fmt_pct(x: float) -> str:
+    return f"{x:.1%}"
+
+
+def fmt_money(x: float) -> str:
+    return f"${x:,.0f}"
+
+
+def safe_mean(df: pd.DataFrame, col: str, default: float = 0.0) -> float:
+    return float(df[col].mean()) if col in df.columns else default
+
+
+def safe_sum(df: pd.DataFrame, col: str, mask=None, default: float = 0.0) -> float:
+    if col not in df.columns:
         return default
     if mask is None:
-        return float(df[column].sum())
-    return float(df.loc[mask, column].sum())
+        return float(df[col].sum())
+    return float(df.loc[mask, col].sum())
 
 
-def build_overview_figures(df: pd.DataFrame):
-    figures = []
+def chart_style(ax, title, xlabel="", ylabel=""):
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
+    ax.set_xlabel(xlabel, fontsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle="--", alpha=0.25)
 
+
+def build_overview_charts(df: pd.DataFrame):
+    charts = []
+
+    # 1) Risk vs Value map
     if {"churn_probability", "value_score"}.issubset(df.columns):
-        fig1, ax1 = plt.subplots(figsize=(8, 5))
-        ax1.scatter(df["churn_probability"], df["value_score"], alpha=0.5)
-        ax1.axvline(HIGH_RISK, linestyle="--")
-        ax1.axhline(HIGH_VALUE, linestyle="--")
-        ax1.set_xlabel("Churn Probability")
-        ax1.set_ylabel("Value Score")
-        ax1.set_title("Customer Risk vs Value")
-        figures.append(("Customer Risk vs Value", fig1))
+        fig, ax = plt.subplots(figsize=(8, 5.2))
+        scatter = ax.scatter(
+            df["churn_probability"],
+            df["value_score"],
+            c=df["value_score"],
+            s=np.clip(df.get("Total Charges", pd.Series([120] * len(df))).fillna(120) / 20, 25, 250),
+            cmap="Reds",
+            alpha=0.55,
+            edgecolors="none",
+        )
+        ax.axvline(HIGH_RISK, linestyle="--", linewidth=1.5)
+        ax.axhline(HIGH_VALUE, linestyle="--", linewidth=1.5)
+        ax.text(HIGH_RISK + 0.01, df["value_score"].max() * 0.93, "High Risk", fontsize=9)
+        ax.text(0.03, HIGH_VALUE + 0.015, "High Value", fontsize=9)
+        chart_style(
+            ax,
+            "Risk vs Value Customer Map",
+            "Churn Probability",
+            "Value Score",
+        )
+        charts.append(fig)
 
-    if "customer_category" in df.columns:
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        df["customer_category"].value_counts().plot(kind="barh", ax=ax2)
-        ax2.set_xlabel("Customers")
-        ax2.set_ylabel("")
-        ax2.set_title("Customer Category Distribution")
-        figures.append(("Customer Category Distribution", fig2))
+    # 2) Segment distribution
+    if "segment" in df.columns:
+        seg = df["segment"].value_counts().sort_values()
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        ax.barh(seg.index, seg.values)
+        for i, v in enumerate(seg.values):
+            ax.text(v + max(seg.values) * 0.01, i, f"{v:,}", va="center", fontsize=9)
+        chart_style(ax, "Customer Segment Distribution", "Customers", "")
+        charts.append(fig)
 
+    # 3) Revenue at risk by segment
+    if {"segment", "Total Charges", "churn_probability"}.issubset(df.columns):
+        risk_df = df.copy()
+        risk_df["revenue_at_risk"] = risk_df["Total Charges"] * risk_df["churn_probability"]
+        rev = risk_df.groupby("segment")["revenue_at_risk"].sum().sort_values()
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        ax.barh(rev.index, rev.values)
+        for i, v in enumerate(rev.values):
+            ax.text(v + max(rev.values) * 0.01, i, f"${v:,.0f}", va="center", fontsize=9)
+        chart_style(ax, "Revenue at Risk by Segment", "Estimated Revenue at Risk", "")
+        charts.append(fig)
+
+    # 4) Contract churn risk
+    if {"Contract", "churn_probability"}.issubset(df.columns):
+        contract_risk = (
+            df.groupby("Contract")["churn_probability"]
+            .mean()
+            .sort_values()
+        )
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        ax.bar(contract_risk.index, contract_risk.values)
+        for i, v in enumerate(contract_risk.values):
+            ax.text(i, v + 0.01, f"{v:.0%}", ha="center", fontsize=9)
+        chart_style(ax, "Average Churn Risk by Contract Type", "", "Avg Churn Probability")
+        plt.setp(ax.get_xticklabels(), rotation=15, ha="right")
+        charts.append(fig)
+
+    # 5) Action recommendation mix
     if "recommended_action" in df.columns:
-        fig3, ax3 = plt.subplots(figsize=(8, 4))
-        df["recommended_action"].value_counts().plot(kind="barh", ax=ax3)
-        ax3.set_xlabel("Customers")
-        ax3.set_ylabel("")
-        ax3.set_title("Recommended Actions")
-        figures.append(("Recommended Actions", fig3))
+        action_counts = clean_action_series(df["recommended_action"]).value_counts().sort_values()
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        ax.barh(action_counts.index, action_counts.values)
+        for i, v in enumerate(action_counts.values):
+            ax.text(v + max(action_counts.values) * 0.01, i, f"{v:,}", va="center", fontsize=9)
+        chart_style(ax, "Recommended Action Mix", "Customers", "")
+        charts.append(fig)
 
+    # 6) Churn probability distribution
     if "churn_probability" in df.columns:
-        fig4, ax4 = plt.subplots(figsize=(8, 4))
-        ax4.hist(df["churn_probability"], bins=25, alpha=0.8)
-        ax4.axvline(HIGH_RISK, linestyle="--")
-        ax4.set_xlabel("Churn Probability")
-        ax4.set_ylabel("Count")
-        ax4.set_title("Churn Probability Distribution")
-        figures.append(("Churn Probability Distribution", fig4))
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        ax.hist(df["churn_probability"], bins=30, alpha=0.9)
+        ax.axvline(HIGH_RISK, linestyle="--", linewidth=1.6)
+        chart_style(ax, "Churn Risk Distribution", "Churn Probability", "Customer Count")
+        charts.append(fig)
 
-    return figures
+    return charts
+
+
+def build_top_save_table(df: pd.DataFrame) -> pd.DataFrame:
+    needed = {"customer_id_display", "segment", "churn_probability", "value_score", "recommended_action"}
+    if not needed.issubset(df.columns):
+        return pd.DataFrame()
+
+    cols = [c for c in [
+        "customer_id_display", "segment", "customer_category", "churn_probability",
+        "value_score", "recommended_action", "Total Charges"
+    ] if c in df.columns]
+
+    top_df = df.sort_values(
+        ["churn_probability", "value_score"],
+        ascending=[False, False]
+    ).head(TOP_N)[cols].copy()
+
+    if "churn_probability" in top_df.columns:
+        top_df["churn_probability"] = top_df["churn_probability"].map(lambda x: f"{x:.1%}")
+    if "value_score" in top_df.columns:
+        top_df["value_score"] = top_df["value_score"].map(lambda x: f"{x:.2f}")
+    if "Total Charges" in top_df.columns:
+        top_df["Total Charges"] = top_df["Total Charges"].map(lambda x: f"${x:,.0f}")
+
+    return top_df
 
 
 def get_customer_view(df: pd.DataFrame, customer_id: str):
@@ -117,30 +251,31 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
 
     row = row.iloc[0]
 
-    info = pd.DataFrame(
+    summary = pd.DataFrame(
         {
             "Field": [
                 "Customer ID",
                 "Segment",
                 "Customer Category",
+                "Value Segment",
                 "Churn Probability",
-                "Value Score",
+                "Predicted Value",
                 "Recommended Action",
             ],
             "Value": [
                 row.get("customer_id_display", "N/A"),
                 row.get("segment", "N/A"),
                 row.get("customer_category", "N/A"),
+                row.get("value_segment", "N/A"),
                 f"{row.get('churn_probability', 0):.1%}" if pd.notna(row.get("churn_probability", None)) else "N/A",
-                f"{row.get('value_score', 0):.2f}" if pd.notna(row.get("value_score", None)) else "N/A",
-                row.get("recommended_action", "N/A"),
+                f"${row.get('predicted_value', 0):,.0f}" if pd.notna(row.get("predicted_value", None)) else "N/A",
+                str(row.get("recommended_action", "N/A")).strip(),
             ],
         }
     )
 
     snapshot_cols = [
-        c
-        for c in [
+        c for c in [
             "Gender",
             "Senior Citizen",
             "Partner",
@@ -151,192 +286,290 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
             "Total Charges",
             "service_count",
             "engagement_score",
-            "Tenure Months",
-        ]
-        if c in df.columns
+            "tenure_group",
+        ] if c in df.columns
     ]
 
     snapshot = row[snapshot_cols].to_frame("Value").reset_index() if snapshot_cols else pd.DataFrame()
     if not snapshot.empty:
         snapshot.columns = ["Feature", "Value"]
 
-    return info, snapshot
+    return summary, snapshot
 
 
-def get_business_view(df: pd.DataFrame):
-    category_df = pd.DataFrame()
-    actions_df = pd.DataFrame()
-    top_risk = pd.DataFrame()
+def get_business_tables(df: pd.DataFrame):
+    tables = {}
 
     if "customer_category" in df.columns:
-        category_df = df["customer_category"].value_counts().reset_index()
-        category_df.columns = ["Customer Category", "Count"]
+        t = df["customer_category"].value_counts().reset_index()
+        t.columns = ["Customer Category", "Count"]
+        tables["categories"] = t
 
     if "recommended_action" in df.columns:
-        actions_df = df["recommended_action"].value_counts().reset_index()
-        actions_df.columns = ["Recommended Action", "Count"]
+        t = clean_action_series(df["recommended_action"]).value_counts().reset_index()
+        t.columns = ["Recommended Action", "Count"]
+        tables["actions"] = t
 
-    sort_cols = [c for c in ["churn_probability", "value_score"] if c in df.columns]
-    top_cols = [
-        c
-        for c in [
-            "customer_id_display",
-            "segment",
-            "churn_probability",
-            "value_score",
-            "recommended_action",
-            "Total Charges",
-        ]
-        if c in df.columns
-    ]
+    if {"segment", "churn_probability", "value_score", "Total Charges"}.issubset(df.columns):
+        segment_perf = (
+            df.groupby("segment")
+            .agg(
+                customers=("segment", "size"),
+                avg_churn_probability=("churn_probability", "mean"),
+                avg_value_score=("value_score", "mean"),
+                total_revenue=("Total Charges", "sum"),
+            )
+            .reset_index()
+        )
+        segment_perf["avg_churn_probability"] = segment_perf["avg_churn_probability"].map(lambda x: f"{x:.1%}")
+        segment_perf["avg_value_score"] = segment_perf["avg_value_score"].map(lambda x: f"{x:.2f}")
+        segment_perf["total_revenue"] = segment_perf["total_revenue"].map(lambda x: f"${x:,.0f}")
+        tables["segment_perf"] = segment_perf
 
-    if sort_cols and top_cols:
-        ascending = [False] * len(sort_cols)
-        top_risk = df.sort_values(sort_cols, ascending=ascending).head(10)[top_cols]
-
-    return category_df, actions_df, top_risk
+    tables["top_save"] = build_top_save_table(df)
+    return tables
 
 
 def get_model_insights(df: pd.DataFrame):
-    cols = [
-        c
-        for c in [
-            "Contract",
-            "Monthly Charges",
-            "Total Charges",
-            "Tenure Months",
-            "service_count",
-            "engagement_score",
-        ]
-        if c in df.columns
-    ]
-    stats = df[cols].describe(include="all").transpose() if cols else pd.DataFrame()
-
+    stats = pd.DataFrame()
     fig = None
-    if {"Churn", "churn_probability"}.issubset(df.columns):
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.hist(df.loc[df["Churn"] == 0, "churn_probability"], bins=25, alpha=0.6, label="Stayed")
-        ax.hist(df.loc[df["Churn"] == 1, "churn_probability"], bins=25, alpha=0.6, label="Churned")
-        ax.set_xlabel("Churn Probability")
-        ax.set_ylabel("Count")
-        ax.set_title("Probability Distribution by Actual Churn")
-        ax.legend()
 
+    cols = [c for c in [
+        "Monthly Charges", "Total Charges", "service_count",
+        "engagement_score", "churn_probability", "value_score"
+    ] if c in df.columns]
+
+    if cols:
+        stats = df[cols].describe().transpose().round(2)
+
+    if {"Churn", "churn_probability"}.issubset(df.columns):
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        ax.hist(df.loc[df["Churn"] == 0, "churn_probability"], bins=25, alpha=0.65, label="Stayed")
+        ax.hist(df.loc[df["Churn"] == 1, "churn_probability"], bins=25, alpha=0.65, label="Churned")
+        ax.axvline(HIGH_RISK, linestyle="--", linewidth=1.5)
+        chart_style(ax, "Predicted Risk vs Actual Churn", "Churn Probability", "Customer Count")
+        ax.legend(frameon=False)
     return stats, fig
 
 
-st.title("AI Customer Intelligence & Retention System")
-st.caption("Streamlit version of your Gradio app, built for GitHub + Streamlit Community Cloud deployment.")
-
-with st.sidebar:
-    st.header("Data Source")
-    uploaded_file = st.file_uploader(
-        "Upload your processed project file",
-        type=["csv", "xlsx", "xls"],
-        help="If you do not upload a file, the app will try to read a project CSV from the repo.",
-    )
-    st.markdown("**Expected repo files:**")
-    st.code("\n".join(DEFAULT_DATA_FILES))
-    st.markdown("**Thresholds**")
-    st.write(f"High-risk threshold: `{HIGH_RISK}`")
-    st.write(f"High-value threshold: `{HIGH_VALUE}`")
-
+# ---------- LOAD ----------
 try:
-    df, source_note = load_project_data(uploaded_file)
+    df, source_note = load_project_data()
     df = ensure_customer_id(df)
 except Exception as e:
     st.error(str(e))
     st.stop()
 
-st.success(source_note)
+# ---------- HERO ----------
+st.markdown(
+    """
+    <div class="hero-card">
+        <div class="hero-title">AI Customer Intelligence & Retention System</div>
+        <div class="hero-sub">
+            A recruiter-ready analytics product that predicts churn, scores customer value,
+            segments customers, and recommends retention actions.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-total_customers = len(df)
-churn_rate = float(df["Churn"].mean()) if "Churn" in df.columns else 0.0
-high_risk = int((df["churn_probability"] >= HIGH_RISK).sum()) if "churn_probability" in df.columns else 0
-avg_value = metric_value(df, "value_score", 0.0)
+st.caption(source_note)
+
+# ---------- SIDEBAR ----------
+with st.sidebar:
+    st.markdown("## Control Center")
+    st.success("Project dataset connected")
+    st.markdown("### Risk Thresholds")
+    st.write(f"High-risk threshold: `{HIGH_RISK}`")
+    st.write(f"High-value threshold: `{HIGH_VALUE}`")
+
+    if "segment" in df.columns:
+        segment_options = ["All"] + sorted(df["segment"].dropna().astype(str).unique().tolist())
+    else:
+        segment_options = ["All"]
+
+    selected_segment = st.selectbox("Filter by segment", segment_options)
+
+    if "Contract" in df.columns:
+        contract_options = ["All"] + sorted(df["Contract"].dropna().astype(str).unique().tolist())
+    else:
+        contract_options = ["All"]
+
+    selected_contract = st.selectbox("Filter by contract", contract_options)
+
+# ---------- FILTER ----------
+filtered_df = df.copy()
+
+if selected_segment != "All" and "segment" in filtered_df.columns:
+    filtered_df = filtered_df[filtered_df["segment"].astype(str) == selected_segment]
+
+if selected_contract != "All" and "Contract" in filtered_df.columns:
+    filtered_df = filtered_df[filtered_df["Contract"].astype(str) == selected_contract]
+
+if filtered_df.empty:
+    st.warning("No records match the selected filters.")
+    st.stop()
+
+# ---------- KPIs ----------
+total_customers = len(filtered_df)
+churn_rate = float(filtered_df["Churn"].mean()) if "Churn" in filtered_df.columns else 0.0
+high_risk_customers = int((filtered_df["churn_probability"] >= HIGH_RISK).sum()) if "churn_probability" in filtered_df.columns else 0
+avg_value_score = safe_mean(filtered_df, "value_score", 0.0)
 revenue_at_risk = (
-    metric_sum(df, "Total Charges", df["churn_probability"] >= HIGH_RISK, 0.0)
-    if {"churn_probability", "Total Charges"}.issubset(df.columns)
+    safe_sum(filtered_df, "Total Charges", filtered_df["churn_probability"] >= HIGH_RISK, 0.0)
+    if {"churn_probability", "Total Charges"}.issubset(filtered_df.columns)
     else 0.0
 )
 
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Total Customers", f"{total_customers:,}")
-col2.metric("Churn Rate", f"{churn_rate:.1%}")
-col3.metric("High-Risk Customers", f"{high_risk:,}")
-col4.metric("Average Value Score", f"{avg_value:.2f}")
-col5.metric("Revenue at Risk", f"${revenue_at_risk:,.0f}")
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("Total Customers", f"{total_customers:,}")
+k2.metric("Churn Rate", fmt_pct(churn_rate))
+k3.metric("High-Risk Customers", f"{high_risk_customers:,}")
+k4.metric("Average Value Score", f"{avg_value_score:.2f}")
+k5.metric("Revenue at Risk", fmt_money(revenue_at_risk))
 
 tabs = st.tabs(["Overview", "Customer Lookup", "Business View", "Model Insights", "Export"])
 
+# ---------- OVERVIEW ----------
 with tabs[0]:
-    st.subheader("Overview")
-    st.info("This app is locked to your Telco project outputs and can run directly from your GitHub repo on Streamlit Cloud.")
+    st.markdown('<div class="section-label">Executive Overview</div>', unsafe_allow_html=True)
 
-    figures = build_overview_figures(df)
-    if figures:
-        for i in range(0, len(figures), 2):
-            cols = st.columns(2)
-            for j, col in enumerate(cols):
-                if i + j < len(figures):
-                    title, fig = figures[i + j]
-                    with col:
-                        st.pyplot(fig, use_container_width=True)
-                        plt.close(fig)
+    charts = build_overview_charts(filtered_df)
+    if charts:
+        for i in range(0, len(charts), 2):
+            c1, c2 = st.columns(2)
+            with c1:
+                if i < len(charts):
+                    st.pyplot(charts[i], use_container_width=True)
+                    plt.close(charts[i])
+            with c2:
+                if i + 1 < len(charts):
+                    st.pyplot(charts[i + 1], use_container_width=True)
+                    plt.close(charts[i + 1])
+
+    if {"segment", "Total Charges", "churn_probability"}.issubset(filtered_df.columns):
+        risky_rev = (filtered_df["Total Charges"] * filtered_df["churn_probability"]).sum()
+        top_segment = (
+            filtered_df.groupby("segment")["churn_probability"].mean().sort_values(ascending=False).index[0]
+        )
     else:
-        st.warning("The required overview columns were not found in the dataset.")
+        risky_rev = 0
+        top_segment = "N/A"
 
+    high_value_high_risk = 0
+    if {"churn_probability", "value_score"}.issubset(filtered_df.columns):
+        high_value_high_risk = int(
+            ((filtered_df["churn_probability"] >= HIGH_RISK) & (filtered_df["value_score"] >= HIGH_VALUE)).sum()
+        )
+
+    st.markdown("### Strategic Insights")
+    i1, i2, i3 = st.columns(3)
+
+    with i1:
+        st.markdown(
+            f"""
+            <div class="insight-box">
+            <b>Revenue Exposure</b><br>
+            Estimated revenue at risk is <b>{fmt_money(risky_rev)}</b>, highlighting where retention campaigns can protect business value.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with i2:
+        st.markdown(
+            f"""
+            <div class="insight-box">
+            <b>Priority Segment</b><br>
+            <b>{top_segment}</b> currently shows the highest average churn risk and should be the first business focus.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with i3:
+        st.markdown(
+            f"""
+            <div class="insight-box">
+            <b>Critical Customers</b><br>
+            <b>{high_value_high_risk:,}</b> customers sit in the high-value, high-risk zone — the most important group to save.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+# ---------- CUSTOMER LOOKUP ----------
 with tabs[1]:
-    st.subheader("Customer Lookup")
-    customer_choices = df["customer_id_display"].astype(str).tolist()
+    st.markdown('<div class="section-label">Customer Intelligence View</div>', unsafe_allow_html=True)
+
+    customer_choices = filtered_df["customer_id_display"].astype(str).tolist()
     selected_customer = st.selectbox("Select customer", customer_choices)
 
-    info_df, snapshot_df = get_customer_view(df, selected_customer)
+    summary_df, snapshot_df = get_customer_view(filtered_df, selected_customer)
+
     left, right = st.columns([1, 1.2])
 
     with left:
-        st.markdown("**Customer Summary**")
-        st.dataframe(info_df, use_container_width=True, hide_index=True)
+        st.markdown("#### Customer Summary")
+        st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     with right:
-        st.markdown("**Customer Snapshot**")
+        st.markdown("#### Customer Snapshot")
         st.dataframe(snapshot_df, use_container_width=True, hide_index=True)
 
+# ---------- BUSINESS VIEW ----------
 with tabs[2]:
-    st.subheader("Business View")
-    category_df, actions_df, top_risk_df = get_business_view(df)
+    st.markdown('<div class="section-label">Business Decision View</div>', unsafe_allow_html=True)
+
+    tables = get_business_tables(filtered_df)
 
     b1, b2 = st.columns(2)
     with b1:
-        st.markdown("**Customer Category Distribution**")
-        st.dataframe(category_df, use_container_width=True, hide_index=True)
+        st.markdown("#### Customer Category Distribution")
+        st.dataframe(tables.get("categories", pd.DataFrame()), use_container_width=True, hide_index=True)
+
     with b2:
-        st.markdown("**Recommended Actions Distribution**")
-        st.dataframe(actions_df, use_container_width=True, hide_index=True)
+        st.markdown("#### Recommended Action Distribution")
+        st.dataframe(tables.get("actions", pd.DataFrame()), use_container_width=True, hide_index=True)
 
-    st.markdown("**Top Customers to Save**")
-    st.dataframe(top_risk_df, use_container_width=True, hide_index=True)
+    st.markdown("#### Segment Performance")
+    st.dataframe(tables.get("segment_perf", pd.DataFrame()), use_container_width=True, hide_index=True)
 
+    st.markdown("#### Top Customers to Save")
+    st.dataframe(tables.get("top_save", pd.DataFrame()), use_container_width=True, hide_index=True)
+
+# ---------- MODEL INSIGHTS ----------
 with tabs[3]:
-    st.subheader("Model Insights")
-    stats_df, prob_fig = get_model_insights(df)
+    st.markdown('<div class="section-label">Model & Feature Insights</div>', unsafe_allow_html=True)
 
-    st.markdown("**Feature Snapshot**")
-    st.dataframe(stats_df, use_container_width=True)
+    stats_df, prob_fig = get_model_insights(filtered_df)
 
-    if prob_fig is not None:
-        st.pyplot(prob_fig, use_container_width=True)
-        plt.close(prob_fig)
-    else:
-        st.warning("Model insight chart needs both 'Churn' and 'churn_probability' columns.")
+    m1, m2 = st.columns([1, 1])
 
+    with m1:
+        st.markdown("#### Feature Summary")
+        st.dataframe(stats_df, use_container_width=True)
+
+    with m2:
+        st.markdown("#### Risk Calibration View")
+        if prob_fig is not None:
+            st.pyplot(prob_fig, use_container_width=True)
+            plt.close(prob_fig)
+        else:
+            st.info("This chart needs both 'Churn' and 'churn_probability' columns.")
+
+# ---------- EXPORT ----------
 with tabs[4]:
-    st.subheader("Export")
-    export_df = df.copy()
+    st.markdown('<div class="section-label">Export Results</div>', unsafe_allow_html=True)
+    export_df = filtered_df.copy()
     csv_data = export_df.to_csv(index=False).encode("utf-8")
+
     st.download_button(
-        label="Download Results CSV",
+        label="Download Filtered Results CSV",
         data=csv_data,
         file_name="customer_intelligence_results.csv",
         mime="text/csv",
     )
+
+    st.dataframe(export_df.head(20), use_container_width=True, hide_index=True)
