@@ -48,14 +48,6 @@ st.markdown(
         font-size: 1rem;
         opacity: 0.95;
     }
-    .insight-box {
-        padding: 1rem 1.1rem;
-        border-radius: 16px;
-        background: #fff5f5;
-        border-left: 6px solid #dc2626;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.05);
-        margin-bottom: 0.8rem;
-    }
     .section-label {
         font-size: 1.15rem;
         font-weight: 700;
