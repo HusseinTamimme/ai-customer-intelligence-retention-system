@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -20,16 +21,11 @@ DEFAULT_DATA_FILES = [
 
 @st.cache_data
 def load_project_data(uploaded_file=None):
-    """
-    Priority:
-    1) Uploaded CSV/XLSX from the sidebar
-    2) Project files committed in the repo
-    """
     if uploaded_file is not None:
         name = uploaded_file.name.lower()
         if name.endswith(".csv"):
             return pd.read_csv(uploaded_file), f"Uploaded file: {uploaded_file.name}"
-        if name.endswith(".xlsx") or name.endswith(".xls"):
+        if name.endswith((".xlsx", ".xls")):
             return pd.read_excel(uploaded_file), f"Uploaded file: {uploaded_file.name}"
         raise ValueError("Please upload a CSV or Excel file.")
 
@@ -48,12 +44,13 @@ def load_project_data(uploaded_file=None):
 def compute_histogram_counts(series: pd.Series, bins: int = 25) -> pd.DataFrame:
     clean = pd.to_numeric(series, errors="coerce").dropna()
     if clean.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["bin_label", "count"])
 
-    counts, edges = pd.cut(clean, bins=bins, retbins=True, include_lowest=True).value_counts(sort=False), None
-    # Recompute with interval labels for a cleaner x-axis
     binned = pd.cut(clean, bins=bins, include_lowest=True)
-    hist_df = binned.value_counts(sort=False).reset_index()
+    categories = binned.cat.categories
+    ordered_counts = binned.value_counts().reindex(categories, fill_value=0)
+
+    hist_df = ordered_counts.reset_index()
     hist_df.columns = ["bin", "count"]
     hist_df["bin_label"] = hist_df["bin"].astype(str)
     return hist_df[["bin_label", "count"]]
@@ -67,6 +64,7 @@ def compute_churn_distribution_by_actual(df: pd.DataFrame, bins: int = 20) -> pd
 
     temp = df[["Churn", "churn_probability"]].copy()
     temp["churn_probability"] = pd.to_numeric(temp["churn_probability"], errors="coerce")
+    temp["Churn"] = pd.to_numeric(temp["Churn"], errors="coerce")
     temp = temp.dropna(subset=["churn_probability", "Churn"])
     if temp.empty:
         return pd.DataFrame()
@@ -103,7 +101,7 @@ def compute_category_counts(df: pd.DataFrame, column: str, index_name: str) -> p
 
     count_df = df[column].fillna("Unknown").astype(str).value_counts().reset_index()
     count_df.columns = [index_name, "Count"]
-    return count_df.set_index(index_name)
+    return count_df
 
 
 def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
@@ -116,22 +114,23 @@ def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
-def metric_value(df, column, default=0):
+def metric_value(df: pd.DataFrame, column: str, default=0.0) -> float:
     if column not in df.columns:
-        return default
-    return float(pd.to_numeric(df[column], errors="coerce").dropna().mean()) if not df.empty else default
+        return float(default)
+    numeric = pd.to_numeric(df[column], errors="coerce").dropna()
+    return float(numeric.mean()) if not numeric.empty else float(default)
 
 
-
-def metric_sum(df, column, mask=None, default=0):
+def metric_sum(df: pd.DataFrame, column: str, mask=None, default=0.0) -> float:
     if column not in df.columns:
-        return default
+        return float(default)
     numeric_col = pd.to_numeric(df[column], errors="coerce")
     if mask is None:
-        return float(numeric_col.dropna().sum())
-    return float(numeric_col.loc[mask].dropna().sum())
+        numeric_col = numeric_col.dropna()
+        return float(numeric_col.sum()) if not numeric_col.empty else float(default)
 
+    filtered = numeric_col.loc[mask].dropna()
+    return float(filtered.sum()) if not filtered.empty else float(default)
 
 
 def get_customer_view(df: pd.DataFrame, customer_id: str):
@@ -140,6 +139,9 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
         return pd.DataFrame(), pd.DataFrame()
 
     row = row.iloc[0]
+
+    churn_prob = pd.to_numeric(pd.Series([row.get("churn_probability")]), errors="coerce").iloc[0]
+    value_score = pd.to_numeric(pd.Series([row.get("value_score")]), errors="coerce").iloc[0]
 
     info = pd.DataFrame(
         {
@@ -155,8 +157,8 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
                 row.get("customer_id_display", "N/A"),
                 row.get("segment", "N/A"),
                 row.get("customer_category", "N/A"),
-                f"{row.get('churn_probability', 0):.1%}" if pd.notna(row.get("churn_probability", None)) else "N/A",
-                f"{row.get('value_score', 0):.2f}" if pd.notna(row.get("value_score", None)) else "N/A",
+                f"{churn_prob:.1%}" if pd.notna(churn_prob) else "N/A",
+                f"{value_score:.2f}" if pd.notna(value_score) else "N/A",
                 row.get("recommended_action", "N/A"),
             ],
         }
@@ -187,19 +189,10 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
     return info, snapshot
 
 
-
 def get_business_view(df: pd.DataFrame):
-    category_df = pd.DataFrame()
-    actions_df = pd.DataFrame()
+    category_df = compute_category_counts(df, "customer_category", "Customer Category")
+    actions_df = compute_category_counts(df, "recommended_action", "Recommended Action")
     top_risk = pd.DataFrame()
-
-    if "customer_category" in df.columns:
-        category_df = df["customer_category"].value_counts().reset_index()
-        category_df.columns = ["Customer Category", "Count"]
-
-    if "recommended_action" in df.columns:
-        actions_df = df["recommended_action"].value_counts().reset_index()
-        actions_df.columns = ["Recommended Action", "Count"]
 
     sort_cols = [c for c in ["churn_probability", "value_score"] if c in df.columns]
     top_cols = [
@@ -219,11 +212,9 @@ def get_business_view(df: pd.DataFrame):
         sortable = df.copy()
         for col in sort_cols:
             sortable[col] = pd.to_numeric(sortable[col], errors="coerce")
-        ascending = [False] * len(sort_cols)
-        top_risk = sortable.sort_values(sort_cols, ascending=ascending).head(10)[top_cols]
+        top_risk = sortable.sort_values(sort_cols, ascending=[False] * len(sort_cols)).head(10)[top_cols]
 
     return category_df, actions_df, top_risk
-
 
 
 def get_model_insights(df: pd.DataFrame):
@@ -271,7 +262,7 @@ st.success(source_note)
 
 total_customers = len(df)
 churn_rate = float(pd.to_numeric(df["Churn"], errors="coerce").dropna().mean()) if "Churn" in df.columns else 0.0
-high_risk = int((pd.to_numeric(df["churn_probability"], errors="coerce") >= HIGH_RISK).sum()) if "churn_probability" in df.columns else 0
+high_risk = int((pd.to_numeric(df["churn_probability"], errors="coerce") >= HIGH_RISK).fillna(False).sum()) if "churn_probability" in df.columns else 0
 avg_value = metric_value(df, "value_score", 0.0)
 revenue_at_risk = (
     metric_sum(df, "Total Charges", pd.to_numeric(df["churn_probability"], errors="coerce") >= HIGH_RISK, 0.0)
@@ -307,7 +298,7 @@ with tabs[0]:
         st.markdown("**Churn Probability Distribution**")
         hist_df = compute_histogram_counts(df["churn_probability"]) if "churn_probability" in df.columns else pd.DataFrame()
         if not hist_df.empty:
-            st.bar_chart(hist_df.set_index("bin_label"), use_container_width=True)
+            st.bar_chart(hist_df.set_index("bin_label")[["count"]], use_container_width=True)
             st.caption(f"Customers at or above {HIGH_RISK:.2f} are considered high risk.")
         else:
             st.warning("This chart needs a valid 'churn_probability' column.")
@@ -318,9 +309,8 @@ with tabs[0]:
         st.markdown("**Customer Category Distribution**")
         category_chart_df = compute_category_counts(df, "customer_category", "Customer Category")
         if not category_chart_df.empty:
-            pie_df = category_chart_df.reset_index()
             st.vega_lite_chart(
-                pie_df,
+                category_chart_df,
                 {
                     "mark": {"type": "arc", "innerRadius": 60},
                     "encoding": {
@@ -345,7 +335,7 @@ with tabs[0]:
         st.markdown("**Recommended Actions**")
         action_chart_df = compute_category_counts(df, "recommended_action", "Recommended Action")
         if not action_chart_df.empty:
-            st.bar_chart(action_chart_df, use_container_width=True)
+            st.bar_chart(action_chart_df.set_index("Recommended Action")[["Count"]], use_container_width=True)
         else:
             st.warning("This chart needs a 'recommended_action' column.")
 
@@ -389,14 +379,14 @@ with tabs[3]:
 
     st.markdown("**Probability Distribution by Actual Churn**")
     if not prob_chart_df.empty:
-        st.bar_chart(prob_chart_df.set_index("probability_bin"), use_container_width=True)
+        plot_df = prob_chart_df.set_index("probability_bin")
+        st.bar_chart(plot_df, use_container_width=True)
     else:
         st.warning("Model insight chart needs both 'Churn' and 'churn_probability' columns.")
 
 with tabs[4]:
     st.subheader("Export")
-    export_df = df.copy()
-    csv_data = export_df.to_csv(index=False).encode("utf-8")
+    csv_data = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         label="Download Results CSV",
         data=csv_data,
