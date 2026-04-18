@@ -380,15 +380,9 @@ def get_model_insights(df: pd.DataFrame):
 
 
 st.title("AI Customer Intelligence & Retention System")
-st.caption("Streamlit version of your Gradio app, built for GitHub + Streamlit Community Cloud deployment.")
+st.caption("")
 
 with st.sidebar:
-    st.header("Data Source")
-    uploaded_file = st.file_uploader(
-        "Upload your processed project file",
-        type=["csv", "xlsx", "xls"],
-        help="If you do not upload a file, the app will try to read a project CSV from the repo.",
-    )
     st.markdown("**Expected repo files:**")
     st.code("\n".join(DEFAULT_DATA_FILES))
     st.markdown("**Thresholds**")
@@ -425,7 +419,7 @@ tabs = st.tabs(["Overview", "Customer Lookup", "Business View", "Model Insights"
 
 with tabs[0]:
     st.subheader("Overview")
-    st.info("This app is locked to your Telco project outputs and can run directly from your GitHub repo on Streamlit Cloud.")
+    st.info("This app is locked to the Telco project outputs.")
 
     overview_left, overview_right = st.columns(2)
 
