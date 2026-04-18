@@ -316,10 +316,24 @@ with tabs[0]:
                     "encoding": {
                         "theta": {"field": "Count", "type": "quantitative"},
                         "color": {
-                            "field": "Customer Category",
-                            "type": "nominal",
-                            "legend": {"title": "Customer Category"},
-                        },
+    "field": "Customer Category",
+    "type": "nominal",
+    "legend": {"title": "Customer Category"},
+    "scale": {
+        "domain": [
+            "High Value - Low Risk",
+            "High Value - High Risk",
+            "Low Value - Low Risk",
+            "Low Value - High Risk"
+        ],
+        "range": [
+            "#2ECC71",  # green → best customers
+            "#E74C3C",  # red → urgent risk
+            "#3498DB",  # blue → stable but low value
+            "#F39C12"   # orange → risky low value
+        ]
+    }
+},
                         "tooltip": [
                             {"field": "Customer Category", "type": "nominal"},
                             {"field": "Count", "type": "quantitative"},
