@@ -83,12 +83,20 @@ def build_overview_figures(df: pd.DataFrame):
         figures.append(("Customer Risk vs Value", fig1))
 
     if "customer_category" in df.columns:
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        df["customer_category"].value_counts().plot(kind="barh", ax=ax2)
-        ax2.set_xlabel("Customers")
-        ax2.set_ylabel("")
-        ax2.set_title("Customer Category Distribution")
-        figures.append(("Customer Category Distribution", fig2))
+        category_counts = df["customer_category"].value_counts()
+        if not category_counts.empty:
+            fig2, ax2 = plt.subplots(figsize=(8, 4))
+            ax2.pie(
+                category_counts.values,
+                labels=category_counts.index,
+                autopct="%1.1f%%",
+                startangle=90,
+                wedgeprops={"width": 0.45},
+                textprops={"fontsize": 10},
+            )
+            ax2.set_title("Customer Category Distribution")
+            ax2.axis("equal")
+            figures.append(("Customer Category Distribution", fig2))
 
     if "recommended_action" in df.columns:
         fig3, ax3 = plt.subplots(figsize=(8, 4))
