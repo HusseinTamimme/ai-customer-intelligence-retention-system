@@ -1,4 +1,6 @@
+
 from pathlib import Path
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
@@ -10,6 +12,7 @@ st.set_page_config(
 
 HIGH_RISK = 0.60
 HIGH_VALUE = 0.70
+
 DEFAULT_DATA_FILES = [
     "business_ready_data.csv",
     "final_scored_data.csv",
@@ -44,68 +47,6 @@ def load_project_data(uploaded_file=None):
     )
 
 
-@st.cache_data
-def compute_histogram_counts(series: pd.Series, bins: int = 25) -> pd.DataFrame:
-    clean = pd.to_numeric(series, errors="coerce").dropna()
-    if clean.empty:
-        return pd.DataFrame()
-
-    counts, edges = pd.cut(clean, bins=bins, retbins=True, include_lowest=True).value_counts(sort=False), None
-    # Recompute with interval labels for a cleaner x-axis
-    binned = pd.cut(clean, bins=bins, include_lowest=True)
-    hist_df = binned.value_counts(sort=False).reset_index()
-    hist_df.columns = ["bin", "count"]
-    hist_df["bin_label"] = hist_df["bin"].astype(str)
-    return hist_df[["bin_label", "count"]]
-
-
-@st.cache_data
-def compute_churn_distribution_by_actual(df: pd.DataFrame, bins: int = 20) -> pd.DataFrame:
-    required = {"Churn", "churn_probability"}
-    if not required.issubset(df.columns):
-        return pd.DataFrame()
-
-    temp = df[["Churn", "churn_probability"]].copy()
-    temp["churn_probability"] = pd.to_numeric(temp["churn_probability"], errors="coerce")
-    temp = temp.dropna(subset=["churn_probability", "Churn"])
-    if temp.empty:
-        return pd.DataFrame()
-
-    temp["actual_status"] = temp["Churn"].map({0: "Stayed", 1: "Churned"}).fillna("Unknown")
-    temp["probability_bin"] = pd.cut(temp["churn_probability"], bins=bins, include_lowest=True)
-
-    chart_df = (
-        temp.groupby(["probability_bin", "actual_status"], observed=False)
-        .size()
-        .unstack(fill_value=0)
-        .reset_index()
-    )
-    chart_df["probability_bin"] = chart_df["probability_bin"].astype(str)
-    return chart_df
-
-
-@st.cache_data
-def compute_scatter_data(df: pd.DataFrame) -> pd.DataFrame:
-    required = {"churn_probability", "value_score"}
-    if not required.issubset(df.columns):
-        return pd.DataFrame()
-
-    scatter_df = df[["churn_probability", "value_score"]].copy()
-    scatter_df["churn_probability"] = pd.to_numeric(scatter_df["churn_probability"], errors="coerce")
-    scatter_df["value_score"] = pd.to_numeric(scatter_df["value_score"], errors="coerce")
-    return scatter_df.dropna().reset_index(drop=True)
-
-
-@st.cache_data
-def compute_category_counts(df: pd.DataFrame, column: str, index_name: str) -> pd.DataFrame:
-    if column not in df.columns:
-        return pd.DataFrame()
-
-    count_df = df[column].fillna("Unknown").astype(str).value_counts().reset_index()
-    count_df.columns = [index_name, "Count"]
-    return count_df.set_index(index_name)
-
-
 def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if "customer_id_display" not in df.columns:
@@ -116,22 +57,57 @@ def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
 def metric_value(df, column, default=0):
-    if column not in df.columns:
-        return default
-    return float(pd.to_numeric(df[column], errors="coerce").dropna().mean()) if not df.empty else default
-
+    return float(df[column].mean()) if column in df.columns else default
 
 
 def metric_sum(df, column, mask=None, default=0):
     if column not in df.columns:
         return default
-    numeric_col = pd.to_numeric(df[column], errors="coerce")
     if mask is None:
-        return float(numeric_col.dropna().sum())
-    return float(numeric_col.loc[mask].dropna().sum())
+        return float(df[column].sum())
+    return float(df.loc[mask, column].sum())
 
+
+def build_overview_figures(df: pd.DataFrame):
+    figures = []
+
+    if {"churn_probability", "value_score"}.issubset(df.columns):
+        fig1, ax1 = plt.subplots(figsize=(8, 5))
+        ax1.scatter(df["churn_probability"], df["value_score"], alpha=0.5)
+        ax1.axvline(HIGH_RISK, linestyle="--")
+        ax1.axhline(HIGH_VALUE, linestyle="--")
+        ax1.set_xlabel("Churn Probability")
+        ax1.set_ylabel("Value Score")
+        ax1.set_title("Customer Risk vs Value")
+        figures.append(("Customer Risk vs Value", fig1))
+
+    if "customer_category" in df.columns:
+        fig2, ax2 = plt.subplots(figsize=(8, 4))
+        df["customer_category"].value_counts().plot(kind="barh", ax=ax2)
+        ax2.set_xlabel("Customers")
+        ax2.set_ylabel("")
+        ax2.set_title("Customer Category Distribution")
+        figures.append(("Customer Category Distribution", fig2))
+
+    if "recommended_action" in df.columns:
+        fig3, ax3 = plt.subplots(figsize=(8, 4))
+        df["recommended_action"].value_counts().plot(kind="barh", ax=ax3)
+        ax3.set_xlabel("Customers")
+        ax3.set_ylabel("")
+        ax3.set_title("Recommended Actions")
+        figures.append(("Recommended Actions", fig3))
+
+    if "churn_probability" in df.columns:
+        fig4, ax4 = plt.subplots(figsize=(8, 4))
+        ax4.hist(df["churn_probability"], bins=25, alpha=0.8)
+        ax4.axvline(HIGH_RISK, linestyle="--")
+        ax4.set_xlabel("Churn Probability")
+        ax4.set_ylabel("Count")
+        ax4.set_title("Churn Probability Distribution")
+        figures.append(("Churn Probability Distribution", fig4))
+
+    return figures
 
 
 def get_customer_view(df: pd.DataFrame, customer_id: str):
@@ -187,7 +163,6 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
     return info, snapshot
 
 
-
 def get_business_view(df: pd.DataFrame):
     category_df = pd.DataFrame()
     actions_df = pd.DataFrame()
@@ -216,14 +191,10 @@ def get_business_view(df: pd.DataFrame):
     ]
 
     if sort_cols and top_cols:
-        sortable = df.copy()
-        for col in sort_cols:
-            sortable[col] = pd.to_numeric(sortable[col], errors="coerce")
         ascending = [False] * len(sort_cols)
-        top_risk = sortable.sort_values(sort_cols, ascending=ascending).head(10)[top_cols]
+        top_risk = df.sort_values(sort_cols, ascending=ascending).head(10)[top_cols]
 
     return category_df, actions_df, top_risk
-
 
 
 def get_model_insights(df: pd.DataFrame):
@@ -240,8 +211,18 @@ def get_model_insights(df: pd.DataFrame):
         if c in df.columns
     ]
     stats = df[cols].describe(include="all").transpose() if cols else pd.DataFrame()
-    prob_chart_df = compute_churn_distribution_by_actual(df)
-    return stats, prob_chart_df
+
+    fig = None
+    if {"Churn", "churn_probability"}.issubset(df.columns):
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.hist(df.loc[df["Churn"] == 0, "churn_probability"], bins=25, alpha=0.6, label="Stayed")
+        ax.hist(df.loc[df["Churn"] == 1, "churn_probability"], bins=25, alpha=0.6, label="Churned")
+        ax.set_xlabel("Churn Probability")
+        ax.set_ylabel("Count")
+        ax.set_title("Probability Distribution by Actual Churn")
+        ax.legend()
+
+    return stats, fig
 
 
 st.title("AI Customer Intelligence & Retention System")
@@ -270,11 +251,11 @@ except Exception as e:
 st.success(source_note)
 
 total_customers = len(df)
-churn_rate = float(pd.to_numeric(df["Churn"], errors="coerce").dropna().mean()) if "Churn" in df.columns else 0.0
-high_risk = int((pd.to_numeric(df["churn_probability"], errors="coerce") >= HIGH_RISK).sum()) if "churn_probability" in df.columns else 0
+churn_rate = float(df["Churn"].mean()) if "Churn" in df.columns else 0.0
+high_risk = int((df["churn_probability"] >= HIGH_RISK).sum()) if "churn_probability" in df.columns else 0
 avg_value = metric_value(df, "value_score", 0.0)
 revenue_at_risk = (
-    metric_sum(df, "Total Charges", pd.to_numeric(df["churn_probability"], errors="coerce") >= HIGH_RISK, 0.0)
+    metric_sum(df, "Total Charges", df["churn_probability"] >= HIGH_RISK, 0.0)
     if {"churn_probability", "Total Charges"}.issubset(df.columns)
     else 0.0
 )
@@ -292,85 +273,18 @@ with tabs[0]:
     st.subheader("Overview")
     st.info("This app is locked to your Telco project outputs and can run directly from your GitHub repo on Streamlit Cloud.")
 
-    left, right = st.columns(2)
-
-    with left:
-        st.markdown("**Customer Risk vs Value**")
-        scatter_df = compute_scatter_data(df)
-        if not scatter_df.empty:
-            st.scatter_chart(scatter_df, x="churn_probability", y="value_score", use_container_width=True)
-            st.caption(f"Reference thresholds: high risk = {HIGH_RISK:.2f}, high value = {HIGH_VALUE:.2f}")
-        else:
-            st.warning("This chart needs both 'churn_probability' and 'value_score' columns.")
-
-    with right:
-        st.markdown("**Churn Probability Distribution**")
-        hist_df = compute_histogram_counts(df["churn_probability"]) if "churn_probability" in df.columns else pd.DataFrame()
-        if not hist_df.empty:
-            st.bar_chart(hist_df.set_index("bin_label"), use_container_width=True)
-            st.caption(f"Customers at or above {HIGH_RISK:.2f} are considered high risk.")
-        else:
-            st.warning("This chart needs a valid 'churn_probability' column.")
-
-    bottom_left, bottom_right = st.columns(2)
-
-    with bottom_left:
-        st.markdown("**Customer Category Distribution**")
-        category_chart_df = compute_category_counts(df, "customer_category", "Customer Category")
-        if not category_chart_df.empty and pd.to_numeric(category_chart_df["Count"], errors="coerce").fillna(0).sum() > 0:
-            category_chart_df = category_chart_df.copy()
-            category_chart_df["Count"] = pd.to_numeric(category_chart_df["Count"], errors="coerce").fillna(0)
-            category_chart_df = category_chart_df[category_chart_df["Count"] > 0].sort_values("Count", ascending=False).reset_index(drop=True)
-
-            category_color_map = {
-                "Loyal High Value": "#2ECC71",
-                "At-Risk High Value": "#E74C3C",
-                "Stable Customer": "#3498DB",
-                "At-Risk Low Value": "#F39C12",
-                "High Value - Low Risk": "#2ECC71",
-                "High Value - High Risk": "#E74C3C",
-                "Low Value - Low Risk": "#3498DB",
-                "Low Value - High Risk": "#F39C12",
-            }
-            color_domain = category_chart_df["Customer Category"].astype(str).tolist()
-            color_range = [category_color_map.get(cat, "#9AA0A6") for cat in color_domain]
-
-            st.vega_lite_chart(
-                category_chart_df,
-                {
-                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                    "autosize": {"type": "fit", "contains": "padding"},
-                    "height": 320,
-                    "mark": {"type": "arc", "innerRadius": 65, "outerRadius": 120},
-                    "encoding": {
-                        "theta": {"field": "Count", "type": "quantitative", "stack": True},
-                        "color": {
-                            "field": "Customer Category",
-                            "type": "nominal",
-                            "legend": {"title": "Customer Category", "orient": "right"},
-                            "scale": {"domain": color_domain, "range": color_range},
-                        },
-                        "tooltip": [
-                            {"field": "Customer Category", "type": "nominal"},
-                            {"field": "Count", "type": "quantitative"},
-                        ],
-                        "order": {"field": "Count", "type": "quantitative", "sort": "descending"},
-                    },
-                    "view": {"stroke": None},
-                },
-                use_container_width=True,
-            )
-            st.caption(f"Reference thresholds: high risk = {HIGH_RISK:.2f}, high value = {HIGH_VALUE:.2f}")
-        else:
-            st.warning("No valid data available for Customer Category Distribution.")
-
-    with bottom_right:
-        st.markdown("**Recommended Actions**")
-        action_chart_df = compute_category_counts(df, "recommended_action", "Recommended Action")
-        if not action_chart_df.empty:
-            st.bar_chart(action_chart_df, use_container_width=True)
-        else:
-            st.warning("This chart needs a 'recommended_action' column.")
+    figures = build_overview_figures(df)
+    if figures:
+        for i in range(0, len(figures), 2):
+            cols = st.columns(2)
+            for j, col in enumerate(cols):
+                if i + j < len(figures):
+                    title, fig = figures[i + j]
+                    with col:
+                        st.pyplot(fig, use_container_width=True)
+                        plt.close(fig)
+    else:
+        st.warning("The required overview columns were not found in the dataset.")
 
 with tabs[1]:
     st.subheader("Customer Lookup")
@@ -405,14 +319,14 @@ with tabs[2]:
 
 with tabs[3]:
     st.subheader("Model Insights")
-    stats_df, prob_chart_df = get_model_insights(df)
+    stats_df, prob_fig = get_model_insights(df)
 
     st.markdown("**Feature Snapshot**")
     st.dataframe(stats_df, use_container_width=True)
 
-    st.markdown("**Probability Distribution by Actual Churn**")
-    if not prob_chart_df.empty:
-        st.bar_chart(prob_chart_df.set_index("probability_bin"), use_container_width=True)
+    if prob_fig is not None:
+        st.pyplot(prob_fig, use_container_width=True)
+        plt.close(prob_fig)
     else:
         st.warning("Model insight chart needs both 'Churn' and 'churn_probability' columns.")
 
