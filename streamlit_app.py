@@ -50,13 +50,20 @@ def compute_histogram_counts(series: pd.Series, bins: int = 25) -> pd.DataFrame:
     if clean.empty:
         return pd.DataFrame()
 
-    counts, edges = pd.cut(clean, bins=bins, retbins=True, include_lowest=True).value_counts(sort=False), None
-    # Recompute with interval labels for a cleaner x-axis
     binned = pd.cut(clean, bins=bins, include_lowest=True)
-    hist_df = binned.value_counts(sort=False).reset_index()
-    hist_df.columns = ["bin", "count"]
-    hist_df["bin_label"] = hist_df["bin"].astype(str)
-    return hist_df[["bin_label", "count"]]
+    category_order = [str(interval) for interval in binned.cat.categories]
+
+    bin_counts = (
+        binned.astype(str)
+        .value_counts()
+        .rename_axis("bin_label")
+        .reset_index(name="count")
+    )
+
+    order_map = {label: idx for idx, label in enumerate(category_order)}
+    bin_counts["_order"] = bin_counts["bin_label"].map(order_map)
+    bin_counts = bin_counts.sort_values("_order").drop(columns="_order")
+    return bin_counts
 
 
 @st.cache_data
@@ -67,6 +74,7 @@ def compute_churn_distribution_by_actual(df: pd.DataFrame, bins: int = 20) -> pd
 
     temp = df[["Churn", "churn_probability"]].copy()
     temp["churn_probability"] = pd.to_numeric(temp["churn_probability"], errors="coerce")
+    temp["Churn"] = pd.to_numeric(temp["Churn"], errors="coerce")
     temp = temp.dropna(subset=["churn_probability", "Churn"])
     if temp.empty:
         return pd.DataFrame()
@@ -106,6 +114,7 @@ def compute_category_counts(df: pd.DataFrame, column: str, index_name: str) -> p
     return count_df.set_index(index_name)
 
 
+
 def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     if "customer_id_display" not in df.columns:
@@ -117,16 +126,19 @@ def ensure_customer_id(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-def metric_value(df, column, default=0):
+def metric_value(df: pd.DataFrame, column: str, default=0.0) -> float:
     if column not in df.columns:
-        return default
-    return float(pd.to_numeric(df[column], errors="coerce").dropna().mean()) if not df.empty else default
+        return float(default)
+    numeric_col = pd.to_numeric(df[column], errors="coerce").dropna()
+    if numeric_col.empty:
+        return float(default)
+    return float(numeric_col.mean())
 
 
 
-def metric_sum(df, column, mask=None, default=0):
+def metric_sum(df: pd.DataFrame, column: str, mask=None, default=0.0) -> float:
     if column not in df.columns:
-        return default
+        return float(default)
     numeric_col = pd.to_numeric(df[column], errors="coerce")
     if mask is None:
         return float(numeric_col.dropna().sum())
@@ -140,6 +152,9 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
         return pd.DataFrame(), pd.DataFrame()
 
     row = row.iloc[0]
+
+    churn_prob = pd.to_numeric(pd.Series([row.get("churn_probability")]), errors="coerce").iloc[0]
+    value_score = pd.to_numeric(pd.Series([row.get("value_score")]), errors="coerce").iloc[0]
 
     info = pd.DataFrame(
         {
@@ -155,8 +170,8 @@ def get_customer_view(df: pd.DataFrame, customer_id: str):
                 row.get("customer_id_display", "N/A"),
                 row.get("segment", "N/A"),
                 row.get("customer_category", "N/A"),
-                f"{row.get('churn_probability', 0):.1%}" if pd.notna(row.get("churn_probability", None)) else "N/A",
-                f"{row.get('value_score', 0):.2f}" if pd.notna(row.get("value_score", None)) else "N/A",
+                f"{churn_prob:.1%}" if pd.notna(churn_prob) else "N/A",
+                f"{value_score:.2f}" if pd.notna(value_score) else "N/A",
                 row.get("recommended_action", "N/A"),
             ],
         }
@@ -219,8 +234,7 @@ def get_business_view(df: pd.DataFrame):
         sortable = df.copy()
         for col in sort_cols:
             sortable[col] = pd.to_numeric(sortable[col], errors="coerce")
-        ascending = [False] * len(sort_cols)
-        top_risk = sortable.sort_values(sort_cols, ascending=ascending).head(10)[top_cols]
+        top_risk = sortable.sort_values(sort_cols, ascending=[False] * len(sort_cols)).head(10)[top_cols]
 
     return category_df, actions_df, top_risk
 
