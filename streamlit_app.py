@@ -309,39 +309,44 @@ with tabs[0]:
         st.markdown("**Customer Category Distribution**")
         category_chart_df = compute_category_counts(df, "customer_category", "Customer Category")
         if not category_chart_df.empty:
+            category_chart_df = category_chart_df.sort_values("Count", ascending=False).reset_index(drop=True)
             st.vega_lite_chart(
                 category_chart_df,
                 {
-                    "mark": {"type": "arc", "innerRadius": 60},
+                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                    "mark": {"type": "arc", "innerRadius": 65, "outerRadius": 120},
                     "encoding": {
                         "theta": {"field": "Count", "type": "quantitative"},
                         "color": {
-    "field": "Customer Category",
-    "type": "nominal",
-    "legend": {"title": "Customer Category"},
-    "scale": {
-        "domain": [
-            "High Value - Low Risk",
-            "High Value - High Risk",
-            "Low Value - Low Risk",
-            "Low Value - High Risk"
-        ],
-        "range": [
-            "#2ECC71",  # green → best customers
-            "#E74C3C",  # red → urgent risk
-            "#3498DB",  # blue → stable but low value
-            "#F39C12"   # orange → risky low value
-        ]
-    }
-},
+                            "field": "Customer Category",
+                            "type": "nominal",
+                            "legend": {"title": "Customer Category", "orient": "right"},
+                            "scale": {
+                                "domain": [
+                                    "High Value - Low Risk",
+                                    "High Value - High Risk",
+                                    "Low Value - Low Risk",
+                                    "Low Value - High Risk",
+                                ],
+                                "range": [
+                                    "#2ECC71",
+                                    "#E74C3C",
+                                    "#3498DB",
+                                    "#F39C12",
+                                ],
+                            },
+                        },
                         "tooltip": [
                             {"field": "Customer Category", "type": "nominal"},
                             {"field": "Count", "type": "quantitative"},
                         ],
+                        "order": {"field": "Count", "type": "quantitative", "sort": "descending"},
                     },
+                    "view": {"stroke": null},
                 },
                 use_container_width=True,
             )
+            st.caption(f"Reference thresholds: high risk = {HIGH_RISK:.2f}, high value = {HIGH_VALUE:.2f}")
         else:
             st.warning("This chart needs a 'customer_category' column.")
 
