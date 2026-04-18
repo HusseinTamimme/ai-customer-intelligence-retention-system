@@ -342,7 +342,7 @@ with tabs[0]:
                         ],
                         "order": {"field": "Count", "type": "quantitative", "sort": "descending"},
                     },
-                    "view": {"stroke": null},
+                    "view": {"stroke": None},
                 },
                 use_container_width=True,
             )
